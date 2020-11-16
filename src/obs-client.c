@@ -389,21 +389,25 @@ void obs_parse_response(obs_client_handle_t client, cJSON *json)
 void obs_parse_raw_data(obs_client_handle_t client, int data_len, const char *data)
 {
     cJSON *json = cJSON_Parse(data);
-    //ESP_LOGI(TAG, "parsed=%s", cJSON_Print(json));
+    if (json != NULL ){
+        // ESP_LOGI(TAG, "parsed=%s", cJSON_Print(json));
 
-    const cJSON *status = cJSON_GetObjectItemCaseSensitive(json, "status");
-    const cJSON *event = cJSON_GetObjectItemCaseSensitive(json, "update-type");
+        const cJSON *status = cJSON_GetObjectItemCaseSensitive(json, "status");
+        const cJSON *event = cJSON_GetObjectItemCaseSensitive(json, "update-type");
 
-    if (cJSON_IsString(status) && (status->valuestring != NULL))
-    {
-        obs_parse_response(client, json);
+        if (cJSON_IsString(status) && (status->valuestring != NULL))
+        {
+            obs_parse_response(client, json);
+        }
+        else if (cJSON_IsString(event) && (event->valuestring != NULL))
+        {
+            obs_parse_event(client, json);
+        }
+
+        cJSON_Delete(json);
+    } else {
+        ESP_LOGE(TAG, "Error could not parse raw data to json");
     }
-    else if (cJSON_IsString(event) && (event->valuestring != NULL))
-    {
-        obs_parse_event(client, json);
-    }
-
-    cJSON_Delete(json);
 }
 
 esp_err_t obs_check_auth_requiered(obs_client_handle_t client)
@@ -464,7 +468,7 @@ void obs_websocket_event_handler(void *handler_args, esp_event_base_t base, int3
         {
             obs_parse_raw_data(client, data->data_len, data->data_ptr);
         }
-
+        
         ESP_LOGI(TAG, "Total payload length=%d, data_len=%d, current payload offset=%d\r\n", data->payload_len, data->data_len, data->payload_offset);
 
         if (client->config->inactivity_timeout_ticks != portMAX_DELAY)
