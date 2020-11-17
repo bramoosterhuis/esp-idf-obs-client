@@ -35,6 +35,15 @@ static const char *TAG = "obs-client";
 
 static uint32_t obs_message_id = 0;
 
+typedef struct obs_message_buffer_t
+{
+    char *buffer;
+    int size;
+    int position;
+} obs_message_buffer_t;
+
+static obs_message_buffer_t *obs_current_message = NULL;
+
 static void obs_get_message_id(uint32_t *id, char *str_id)
 {
     *id = Atomic_Increment_u32(&obs_message_id);
@@ -95,10 +104,8 @@ struct obs_client
     obs_config_storage_t *config;
     obs_client_state_t state;
     xSemaphoreHandle lock;
-    TaskHandle_t worker;
-    uint32_t last_id;
-    int payload_len;
-    int payload_offset;
+    TaskHandle_t message_parse_worker;
+    QueueHandle_t to_do_list;
 };
 
 // Private
@@ -389,7 +396,8 @@ void obs_parse_response(obs_client_handle_t client, cJSON *json)
 void obs_parse_raw_data(obs_client_handle_t client, int data_len, const char *data)
 {
     cJSON *json = cJSON_Parse(data);
-    if (json != NULL ){
+    if (json != NULL)
+    {
         // ESP_LOGI(TAG, "parsed=%s", cJSON_Print(json));
 
         const cJSON *status = cJSON_GetObjectItemCaseSensitive(json, "status");
@@ -405,7 +413,9 @@ void obs_parse_raw_data(obs_client_handle_t client, int data_len, const char *da
         }
 
         cJSON_Delete(json);
-    } else {
+    }
+    else
+    {
         ESP_LOGE(TAG, "Error could not parse raw data to json");
     }
 }
@@ -456,20 +466,45 @@ void obs_websocket_event_handler(void *handler_args, esp_event_base_t base, int3
     }
     case WEBSOCKET_EVENT_DATA:
     {
-        ESP_LOGI(TAG, "WEBSOCKET_EVENT_DATA");
-        ESP_LOGI(TAG, "Received opcode=%d", data->op_code);
+        ESP_LOGD(TAG, "WEBSOCKET_EVENT_DATA");
+        ESP_LOGD(TAG, "Received opcode=%d", data->op_code);
+        ESP_LOGD(TAG, "Total payload length=%d, data_len=%d, current payload offset=%d\r\n",
+                 data->payload_len, data->data_len, data->payload_offset);
+
         if (data->op_code == 0x08)
         {
             ESP_LOGI(TAG, "Received closed message with code=%d", 256 * data->data_ptr[0] + data->data_ptr[1]);
             client->state = OBS_CLIENT_STATE_CONNECTED;
             obs_client_dispatch_event(client, OBS_EVENT_CLIENT_DISCONNETED, NULL, 0);
         }
-        else if (data->data_len > 0)
+        else if (data->payload_len > 0)
         {
-            obs_parse_raw_data(client, data->data_len, data->data_ptr);
+            // lets hope that data send by multiple events are garanteed to be received in order.
+            if (obs_current_message == NULL)
+            {
+                obs_current_message = calloc(1, sizeof(obs_message_buffer_t));
+
+                obs_current_message->buffer = calloc(data->payload_len, sizeof(char));
+                obs_current_message->size = data->payload_len;
+                obs_current_message->position = 0;
+            }
+
+            memmove(
+                &obs_current_message->buffer[obs_current_message->position],
+                data->data_ptr,
+                data->data_len);
+
+            obs_current_message->position += data->data_len;
+
+            // all data complete, send it over to the parser
+            if (obs_current_message->position == obs_current_message->size)
+            {
+                obs_message_buffer_t *message = obs_current_message;
+                obs_current_message = NULL;
+
+                xQueueSend(client->to_do_list, message, portMAX_DELAY);
+            }
         }
-        
-        ESP_LOGI(TAG, "Total payload length=%d, data_len=%d, current payload offset=%d\r\n", data->payload_len, data->data_len, data->payload_offset);
 
         if (client->config->inactivity_timeout_ticks != portMAX_DELAY)
         {
@@ -486,6 +521,26 @@ void obs_websocket_event_handler(void *handler_args, esp_event_base_t base, int3
         break;
     }
     }
+}
+
+void obs_client_message_worker(void *pvParameters)
+{
+    BaseType_t xStatus;
+    obs_message_buffer_t data;
+
+    obs_client_handle_t client = (obs_client_handle_t)pvParameters;
+
+    for (;;)
+    {
+        xStatus = xQueueReceive(client->to_do_list, &data, portMAX_DELAY);
+
+        if (xStatus == pdPASS)
+        {
+            obs_parse_raw_data(client, data.size, data.buffer);
+        }
+    }
+
+    vTaskDelete(NULL);
 }
 
 // Public
@@ -524,6 +579,8 @@ obs_client_handle_t obs_client_init(const obs_client_config_t *config)
                                                      pdFALSE, NULL, inactivity_signaler);
     }
 
+    client->to_do_list = xQueueCreate(3, sizeof(obs_message_buffer_t));
+
     return client;
 
 _obs_init_fail:
@@ -537,6 +594,8 @@ esp_err_t obs_client_start(obs_client_handle_t client)
         return ESP_ERR_INVALID_ARG;
 
     esp_err_t result = ESP_OK;
+
+    xTaskCreate(&obs_client_message_worker, "messages parse worker", 3072, (void *)client, 5, &client->message_parse_worker);
 
     esp_websocket_client_config_t websocket_cfg = {
         .uri = client->config->host,
@@ -575,6 +634,12 @@ esp_err_t obs_client_stop(obs_client_handle_t client)
         client->connection = NULL;
     }
 
+    if (client->message_parse_worker != NULL)
+    {
+        vTaskDelete(client->message_parse_worker);
+        client->message_parse_worker = NULL;
+    }
+
     ESP_LOGI(TAG, "Disconnected from OBS host");
 
     return result;
@@ -593,12 +658,6 @@ esp_err_t obs_client_destroy(obs_client_handle_t client)
         result = obs_client_stop(client);
         result = esp_websocket_client_destroy(client->connection);
         client->connection = NULL;
-    }
-
-    if (client->worker != NULL)
-    {
-        vTaskDelete(client->worker);
-        client->worker = NULL;
     }
 
     return result;
