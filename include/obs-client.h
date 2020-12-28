@@ -31,8 +31,9 @@ extern "C"
     OBS_EVENT_ANY = -1,
     OBS_EVENT_MESSAGE_RESONSE = 0,
     OBS_EVENT_MESSAGE_EVENT,
+    OBS_EVENT_CLIENT_NOT_CONFIGURED,
     OBS_EVENT_CLIENT_CONNECTED,
-    OBS_EVENT_CLIENT_DISCONNETED,
+    OBS_EVENT_CLIENT_DISCONNECTED,
     OBS_EVENT_CLIENT_ERROR,
     OBS_EVENT_CLIENT_INACTIVE_WARNING,
     OBS_EVENT_MAX
@@ -47,7 +48,6 @@ extern "C"
     int port;                    /*!< Port to connect */
     const char *password;        /*!< Using for Http authentication */
     int connection_timeout_ms;   /*!< Time out for port related matters */
-    void *user_context;          /*!< User data context */
     bool disable_auto_reconnect; /*!< Do not reconect automatically. */
     int inactivity_timeout_ms;   /*!< Time out for port related matters */
   } obs_client_config_t;
@@ -58,24 +58,56 @@ extern "C"
   typedef struct obs_event_data_t
   {
     obs_client_handle_t client; /*!< esp_websocket_client_handle_t context */
-    void *user_context;         /*!< user_data context, from obs_client_config_t user_data */
-    const void *data_ptr; /*!< Data pointer */
-    int data_len;         /*!< Data length */
+    const void *data_ptr;       /*!< Data pointer */
+    int data_len;               /*!< Data length */
   } obs_event_data_t;
 
   /**
- * @brief      Start a OBS session
+ * @brief      Creates a empty OBS client
  *             This function must be the first function to call,
  *             and it returns a obs_client_handle_t that you must use as input to other functions in the interface.
  *             This call MUST have a corresponding call to obs_client_destroy when the operation is complete.
- *
- * @param[in]  config  The configuration
- *
+ * 
  * @return
  *     - `obs_client_handle_t`
  *     - NULL if any errors
  */
-  obs_client_handle_t obs_client_init(const obs_client_config_t *config);
+  obs_client_handle_t obs_client_create();
+
+  /**
+ * @brief      Destroy the OBS connection and free all resources.
+ *             This function must be the last function to call for an session.
+ *             It is the opposite of the obs_client_init function and must be called with the same handle as input that a obs_client_init call returned.
+ *             This might close all connections this handle has used.
+ *
+ *  Notes:
+ *  - Cannot be called from the websocket event handler
+ * 
+ * @param[in]  client  The client
+ *
+ * @return     esp_err_t
+ */
+  esp_err_t obs_client_destroy(obs_client_handle_t client);
+
+  /**
+ * @brief Returns the current config used by the OBS client
+ *
+ * @param[in]  client            The client handle
+ * @param[out] config            The current config
+ * @return esp_err_t
+ */
+  esp_err_t obs_client_get_config(obs_client_handle_t client,
+                                  obs_client_config_t *config);
+
+  /**
+ * @brief Sets a new config to us for the OBS client
+ *
+ * @param[in]  client            The client handle
+ * @param[in]  config            The new config
+ * @return esp_err_t
+ */
+  esp_err_t obs_client_set_config(obs_client_handle_t client,
+                                  const obs_client_config_t *config);
 
   /**
  * @brief      Open the OBS connection
@@ -103,21 +135,6 @@ extern "C"
   esp_err_t obs_client_stop(obs_client_handle_t client);
 
   /**
- * @brief      Destroy the OBS connection and free all resources.
- *             This function must be the last function to call for an session.
- *             It is the opposite of the obs_client_init function and must be called with the same handle as input that a obs_client_init call returned.
- *             This might close all connections this handle has used.
- *
- *  Notes:
- *  - Cannot be called from the websocket event handler
- * 
- * @param[in]  client  The client
- *
- * @return     esp_err_t
- */
-  esp_err_t obs_client_destroy(obs_client_handle_t client);
-
-  /**
  * @brief      Check the OBS client connection state
  *
  * @param[in]  client  The client handle
@@ -131,10 +148,10 @@ extern "C"
   /**
  * @brief Register the OBS Events
  *
- * @param client            The client handle
- * @param event             The event id
- * @param event_handler     The callback function
- * @param event_handler_arg User context
+ * @param[in] client            The client handle
+ * @param[in] event             The event id
+ * @param[in] event_handler     The callback function
+ * @param[in] event_handler_arg User context
  * @return esp_err_t
  */
   esp_err_t obs_client_register_events(obs_client_handle_t client,
@@ -145,9 +162,9 @@ extern "C"
   /**
  * @brief Unregister the OBS Events
  *
- * @param client            The client handle
- * @param event             The event id
- * @param event_handler     The callback function
+ * @param[in] client            The client handle
+ * @param[in] event             The event id
+ * @param[in] event_handler     The callback function
  * @return esp_err_t
  */
   esp_err_t obs_client_unregister_events(obs_client_handle_t client,
@@ -157,14 +174,30 @@ extern "C"
   /**
  * @brief Send a OBS Request
  *
- * @param client            The client handle
- * @param message           The message  
- * @param message_id           The message id of the result message to be received.
+ * @param[in] client            The client handle
+ * @param[in] message           The message  
+ * @param[in] message_id           The message id of the result message to be received.
  * @return esp_err_t
  */
   esp_err_t obs_client_send_request(obs_client_handle_t client,
                                     obs_request_message_t message,
                                     uint32_t *message_id);
+
+  /**
+ * @brief Persist the current config of the client. 
+ *
+ * @param[in] client            The client handle
+ * @return esp_err_t
+ */
+  esp_err_t obs_client_persist_config(obs_client_handle_t client);
+
+  /**
+ * @brief Clears the persisted the config of the client. 
+ *
+ * @param[in] client            The client handle
+ * @return esp_err_t
+ */
+  esp_err_t obs_client_clear_config(obs_client_handle_t client);
 
 #ifdef __cplusplus
 }
