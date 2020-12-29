@@ -525,7 +525,7 @@ void obs_client_websocket_event_handler(void *user_data, esp_event_base_t base, 
     case WEBSOCKET_EVENT_CONNECTED:
     {
         ESP_LOGI(TAG, "WEBSOCKET_EVENT_CONNECTED");
-        if (client->state <= OBS_CLIENT_STATE_INIT)
+        if ((client->state != OBS_CLIENT_STATE_CONNECTING) && (client->state != OBS_CLIENT_STATE_CONNECTED))
         {
             obs_client_check_auth_requiered(client);
             client->state = OBS_CLIENT_STATE_CONNECTING;
@@ -909,14 +909,10 @@ esp_err_t obs_client_set_config(obs_client_handle_t client,
     if (client == NULL)
         return ESP_ERR_INVALID_ARG;
 
+    if(client->state == OBS_CLIENT_STATE_CONNECTED)
+        return ESP_ERR_NVS_INVALID_STATE;
+
     esp_err_t result = ESP_OK;
-
-    bool reconnect = (client->state == OBS_CLIENT_STATE_CONNECTED); // obs_client_is_connected(client);
-
-    if (reconnect)
-    {
-        result = obs_client_stop(client);
-    }
 
     if (obs_client_set_config_priv(client, config) != ESP_OK)
     {
@@ -928,11 +924,6 @@ esp_err_t obs_client_set_config(obs_client_handle_t client,
     {
         client->inactive_signal_timer = xTimerCreate("Inactivity Timer", client->config->inactivity_timeout_ticks,
                                                      pdFALSE, NULL, obs_client_inactivity_signaler);
-    }
-
-    if (reconnect)
-    {
-        result = obs_client_start(client);
     }
 
     return result;
