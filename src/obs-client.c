@@ -153,7 +153,7 @@ static esp_err_t obs_client_dispatch_event(obs_client_handle_t client,
     return err;
 }
 
-static void inactivity_signaler(TimerHandle_t xTimer)
+static void obs_client_inactivity_signaler(TimerHandle_t xTimer)
 {
     ESP_LOGI(TAG, "client inactive for too long");
 }
@@ -286,7 +286,7 @@ _obs_init_fail:
     return ESP_ERR_NO_MEM;
 }
 
-esp_err_t obs_authenicate(obs_client_handle_t client, cJSON *json)
+esp_err_t obs_client_authenicate(obs_client_handle_t client, cJSON *json)
 {
     if (client == NULL)
         return ESP_ERR_INVALID_ARG;
@@ -380,7 +380,7 @@ esp_err_t obs_authenicate(obs_client_handle_t client, cJSON *json)
     return result;
 }
 
-void obs_parse_event(obs_client_handle_t client, cJSON *json)
+void obs_client_parse_event(obs_client_handle_t client, cJSON *json)
 {
     obs_event_message_t event = {0};
 
@@ -402,7 +402,7 @@ void obs_parse_event(obs_client_handle_t client, cJSON *json)
     obs_client_dispatch_event(client, OBS_EVENT_MESSAGE_EVENT, &event, sizeof(event));
 }
 
-void obs_parse_response(obs_client_handle_t client, cJSON *json)
+void obs_client_parse_response(obs_client_handle_t client, cJSON *json)
 {
     obs_request_result_t status = OBS_RESULT_UNKNOWN;
     uint32_t id = 0;
@@ -435,7 +435,7 @@ void obs_parse_response(obs_client_handle_t client, cJSON *json)
             internal_message = NULL;
             internal = true;
 
-            obs_authenicate(client, json);
+            obs_client_authenicate(client, json);
         }
         else if ((id == internal_message->id) && (internal_message->type == ObsRequestAuthenticate))
         {
@@ -465,7 +465,7 @@ void obs_parse_response(obs_client_handle_t client, cJSON *json)
     }
 }
 
-void obs_parse_raw_data(obs_client_handle_t client, int data_len, const char *data)
+void obs_client_parse_raw_data(obs_client_handle_t client, int data_len, const char *data)
 {
     cJSON *json = cJSON_Parse(data);
 
@@ -478,11 +478,11 @@ void obs_parse_raw_data(obs_client_handle_t client, int data_len, const char *da
 
         if (cJSON_IsString(status) && (status->valuestring != NULL))
         {
-            obs_parse_response(client, json);
+            obs_client_parse_response(client, json);
         }
         else if (cJSON_IsString(event) && (event->valuestring != NULL))
         {
-            obs_parse_event(client, json);
+            obs_client_parse_event(client, json);
         }
 
         cJSON_Delete(json);
@@ -493,7 +493,7 @@ void obs_parse_raw_data(obs_client_handle_t client, int data_len, const char *da
     }
 }
 
-esp_err_t obs_check_auth_requiered(obs_client_handle_t client)
+esp_err_t obs_client_check_auth_requiered(obs_client_handle_t client)
 {
 
     if (client == NULL)
@@ -514,7 +514,7 @@ esp_err_t obs_check_auth_requiered(obs_client_handle_t client)
     return result;
 }
 
-void obs_websocket_event_handler(void *user_data, esp_event_base_t base, int32_t event_id, void *event_data)
+void obs_client_websocket_event_handler(void *user_data, esp_event_base_t base, int32_t event_id, void *event_data)
 {
     esp_websocket_event_data_t *data = (esp_websocket_event_data_t *)event_data;
 
@@ -527,7 +527,7 @@ void obs_websocket_event_handler(void *user_data, esp_event_base_t base, int32_t
         ESP_LOGI(TAG, "WEBSOCKET_EVENT_CONNECTED");
         if (client->state <= OBS_CLIENT_STATE_INIT)
         {
-            obs_check_auth_requiered(client);
+            obs_client_check_auth_requiered(client);
             client->state = OBS_CLIENT_STATE_CONNECTING;
         }
         break;
@@ -622,7 +622,7 @@ void obs_client_message_worker(void *pvParameters)
         if (xStatus == pdPASS)
         {
             ESP_LOGD(TAG, "parse data(%d)=%p", data.size, data.buffer);
-            obs_parse_raw_data(client, data.size, data.buffer);
+            obs_client_parse_raw_data(client, data.size, data.buffer);
             obs_client_destroy_message(&data);
         }
     }
@@ -927,7 +927,7 @@ esp_err_t obs_client_set_config(obs_client_handle_t client,
     if ((client->config->inactivity_timeout_ticks != portMAX_DELAY) && (client->config->inactivity_timeout_ticks > 0))
     {
         client->inactive_signal_timer = xTimerCreate("Inactivity Timer", client->config->inactivity_timeout_ticks,
-                                                     pdFALSE, NULL, inactivity_signaler);
+                                                     pdFALSE, NULL, obs_client_inactivity_signaler);
     }
 
     if (reconnect)
@@ -1009,7 +1009,7 @@ esp_err_t obs_client_start(obs_client_handle_t client)
 
     client->connection = esp_websocket_client_init(&websocket_cfg);
 
-    result = esp_websocket_register_events(client->connection, WEBSOCKET_EVENT_ANY, obs_websocket_event_handler, (void *)client);
+    result = esp_websocket_register_events(client->connection, WEBSOCKET_EVENT_ANY, obs_client_websocket_event_handler, (void *)client);
 
     ESP_LOGI(TAG, "Connecting to %s...", websocket_cfg.uri);
 
