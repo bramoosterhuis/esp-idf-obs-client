@@ -46,14 +46,14 @@ const char obs_client_nvs_reconect_key[] = "ocrct";
 
 static uint32_t obs_message_id = 0;
 
-typedef struct obs_message_buffer_t
+typedef struct obs_client_message_buffer_t
 {
     char *buffer;
     int size;
     int position;
-} obs_message_buffer_t;
+} obs_client_message_buffer_t;
 
-static obs_message_buffer_t *obs_current_message = NULL;
+static obs_client_message_buffer_t *_obs_client_current_message = NULL;
 
 static void obs_get_message_id(uint32_t *id, char *str_id)
 {
@@ -200,7 +200,7 @@ static esp_err_t obs_client_clean_config(obs_client_handle_t client)
     return ESP_OK;
 }
 
-esp_err_t obs_client_destroy_message(obs_message_buffer_t *message)
+esp_err_t obs_client_destroy_message(obs_client_message_buffer_t *message)
 {
     if (message == NULL)
         return ESP_ERR_INVALID_ARG;
@@ -210,7 +210,7 @@ esp_err_t obs_client_destroy_message(obs_message_buffer_t *message)
         free(message->buffer);
     }
 
-    memset(message, 0, sizeof(obs_message_buffer_t));
+    memset(message, 0, sizeof(obs_client_message_buffer_t));
 
     return ESP_OK;
 }
@@ -555,37 +555,37 @@ void obs_websocket_event_handler(void *user_data, esp_event_base_t base, int32_t
         else if (data->payload_len > 0)
         {
             // lets hope that data send by multiple events are garanteed to be received in order.
-            if (obs_current_message == NULL)
+            if (_obs_client_current_message == NULL)
             {
-                obs_current_message = calloc(1, sizeof(obs_message_buffer_t));
+                _obs_client_current_message = calloc(1, sizeof(obs_client_message_buffer_t));
 
-                ESP_OBS_CLIENT_MEM_CHECK(TAG, obs_current_message, {
+                ESP_OBS_CLIENT_MEM_CHECK(TAG, _obs_client_current_message, {
                     return;
                 });
 
-                obs_current_message->buffer = calloc(data->payload_len, sizeof(char));
+                _obs_client_current_message->buffer = calloc(data->payload_len, sizeof(char));
 
-                ESP_OBS_CLIENT_MEM_CHECK(TAG, obs_current_message->buffer, {
-                    free(obs_current_message);
+                ESP_OBS_CLIENT_MEM_CHECK(TAG, _obs_client_current_message->buffer, {
+                    free(_obs_client_current_message);
                     return;
                 });
 
-                obs_current_message->size = data->payload_len;
-                obs_current_message->position = 0;
+                _obs_client_current_message->size = data->payload_len;
+                _obs_client_current_message->position = 0;
             }
 
             memmove(
-                &obs_current_message->buffer[obs_current_message->position],
+                &_obs_client_current_message->buffer[_obs_client_current_message->position],
                 data->data_ptr,
                 data->data_len);
 
-            obs_current_message->position += data->data_len;
+            _obs_client_current_message->position += data->data_len;
 
             // all data complete, send it over to the parser
-            if (obs_current_message->position == obs_current_message->size)
+            if (_obs_client_current_message->position == _obs_client_current_message->size)
             {
-                obs_message_buffer_t *message = obs_current_message;
-                obs_current_message = NULL;
+                obs_client_message_buffer_t *message = _obs_client_current_message;
+                _obs_client_current_message = NULL;
 
                 xQueueSend(client->to_do_list, message, portMAX_DELAY);
             }
@@ -611,7 +611,7 @@ void obs_websocket_event_handler(void *user_data, esp_event_base_t base, int32_t
 void obs_client_message_worker(void *pvParameters)
 {
     BaseType_t xStatus;
-    obs_message_buffer_t data;
+    obs_client_message_buffer_t data;
 
     obs_client_handle_t client = (obs_client_handle_t)pvParameters;
 
@@ -962,7 +962,7 @@ obs_client_handle_t obs_client_create()
 
     client->state = OBS_CLIENT_STATE_INIT;
 
-    client->to_do_list = xQueueCreate(3, sizeof(obs_message_buffer_t));
+    client->to_do_list = xQueueCreate(3, sizeof(obs_client_message_buffer_t));
     ESP_OBS_CLIENT_MEM_CHECK(TAG, client->to_do_list, goto _obs_init_fail);
 
     if (nvs_flash_init() != ESP_OK)
