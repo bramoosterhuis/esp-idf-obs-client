@@ -200,6 +200,21 @@ static esp_err_t obs_client_clean_config(obs_client_handle_t client)
     return ESP_OK;
 }
 
+esp_err_t obs_client_destroy_message(obs_message_buffer_t *message)
+{
+    if (message == NULL)
+        return ESP_ERR_INVALID_ARG;
+
+    if (message->buffer)
+    {
+        free(message->buffer);
+    }
+
+    memset(message, 0, sizeof(obs_message_buffer_t));
+
+    return ESP_OK;
+}
+
 esp_err_t obs_client_set_config_priv(obs_client_handle_t client, const obs_client_config_t *config)
 {
     if (client == NULL)
@@ -344,6 +359,10 @@ esp_err_t obs_authenicate(obs_client_handle_t client, cJSON *json)
                 message.body = body;
 
                 internal_message = calloc(1, sizeof(obs_send_message_item_t));
+                ESP_OBS_CLIENT_MEM_CHECK(TAG, internal_message, {
+                    cJSON_Delete(body);
+                    return ESP_ERR_NO_MEM;
+                });
 
                 internal_message->type = message.type;
 
@@ -486,6 +505,7 @@ esp_err_t obs_check_auth_requiered(obs_client_handle_t client)
     message.type = ObsRequestGetAuthRequired;
 
     internal_message = calloc(1, sizeof(obs_send_message_item_t)); // will be cleared by the response message;
+    ESP_OBS_CLIENT_MEM_CHECK(TAG, internal_message, return ESP_ERR_NO_MEM);
 
     internal_message->type = message.type;
 
@@ -539,7 +559,17 @@ void obs_websocket_event_handler(void *user_data, esp_event_base_t base, int32_t
             {
                 obs_current_message = calloc(1, sizeof(obs_message_buffer_t));
 
+                ESP_OBS_CLIENT_MEM_CHECK(TAG, obs_current_message, {
+                    return;
+                });
+
                 obs_current_message->buffer = calloc(data->payload_len, sizeof(char));
+
+                ESP_OBS_CLIENT_MEM_CHECK(TAG, obs_current_message->buffer, {
+                    free(obs_current_message);
+                    return;
+                });
+
                 obs_current_message->size = data->payload_len;
                 obs_current_message->position = 0;
             }
@@ -593,6 +623,7 @@ void obs_client_message_worker(void *pvParameters)
         {
             ESP_LOGD(TAG, "parse data(%d)=%p", data.size, data.buffer);
             obs_parse_raw_data(client, data.size, data.buffer);
+            obs_client_destroy_message(&data);
         }
     }
 
@@ -645,6 +676,9 @@ esp_err_t obs_client_recall_config(obs_client_handle_t client)
     if (result == ESP_OK)
     {
         obs_config_storage_t *config = calloc(1, sizeof(obs_config_storage_t));
+        ESP_OBS_CLIENT_MEM_CHECK(TAG, config, {
+            return ESP_ERR_NO_MEM;
+        });
 
         size_t size = sizeof(config->port);
         result = obs_client_recall_config_from_nvs(handle, obs_client_nvs_port_key, &(config->port), &size);
@@ -658,6 +692,11 @@ esp_err_t obs_client_recall_config(obs_client_handle_t client)
             if ((size > 0) && (result == ESP_OK))
             {
                 config->host = calloc(size + 1, sizeof(char));
+                ESP_OBS_CLIENT_MEM_CHECK(TAG, config->host, {
+                    obs_client_destroy_config(&config);
+                    free(config);
+                    return ESP_ERR_NO_MEM;
+                });
 
                 result = obs_client_recall_config_from_nvs(handle, obs_client_nvs_host_key, config->host, &size);
                 ESP_LOGD(TAG, "obs_client_recall_config_from_nvs result obs_client_nvs_host_key: 0x%08X.", result);
@@ -672,6 +711,11 @@ esp_err_t obs_client_recall_config(obs_client_handle_t client)
             if ((size > 0) && (result == ESP_OK))
             {
                 config->password = calloc(size + 1, sizeof(char));
+                ESP_OBS_CLIENT_MEM_CHECK(TAG, config->password, {
+                    obs_client_destroy_config(&config);
+                    free(config);
+                    return ESP_ERR_NO_MEM;
+                });
 
                 result = obs_client_recall_config_from_nvs(handle, obs_client_nvs_password_key, config->password, &size);
                 ESP_LOGD(TAG, "obs_client_recall_config_from_nvs obs_client_nvs_password_key result: 0x%08X.", result);
